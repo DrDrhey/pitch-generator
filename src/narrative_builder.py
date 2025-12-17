@@ -16,7 +16,7 @@ class NarrativeBuilder:
             raise ValueError("Clé API Gemini non trouvée")
         
         genai.configure(api_key=self.api_key)
-        # Utiliser Gemini 2.5 Flash (modèle le plus récent)
+        # Utiliser gemini-2.5-flash (dernière version, plus performante)
         self.model = genai.GenerativeModel('gemini-2.5-flash')
     
     def generate_all(self, analysis: 'GlobalAnalysis', context: Dict) -> Dict:
@@ -287,7 +287,7 @@ class PitchRefiner:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         genai.configure(api_key=self.api_key)
-        # Utiliser Gemini 2.5 Flash (modèle le plus récent)
+        # Utiliser gemini-2.5-flash (dernière version, plus performante)
         self.model = genai.GenerativeModel('gemini-2.5-flash')
     
     def refine_for_tone(self, pitch: str, target_tone: str) -> str:

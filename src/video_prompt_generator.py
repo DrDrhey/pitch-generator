@@ -101,6 +101,7 @@ class VideoPromptGenerator:
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if self.api_key:
             genai.configure(api_key=self.api_key)
+            # Utiliser gemini-2.5-flash (dernière version, plus performante)
             self.model = genai.GenerativeModel('gemini-2.5-flash')
         else:
             self.model = None
@@ -323,6 +324,7 @@ class ImageToVideoPrompt:
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if self.api_key:
             genai.configure(api_key=self.api_key)
+            # Utiliser gemini-2.5-flash (dernière version, plus performante)
             self.model = genai.GenerativeModel('gemini-2.5-flash')
     
     def generate_from_image(

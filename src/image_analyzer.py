@@ -1,21 +1,24 @@
 """
-Module d'analyse d'images via Google Gemini
+Module d'analyse d'images avec Google Gemini
+Optimisé pour analyser de grandes quantités d'images (100+)
+Utilise le batching pour minimiser les requêtes API
 """
 
 import os
 import time
 import base64
+import json
 from typing import List, Dict, Optional, Callable
-import google.generativeai as genai
 from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
+import google.generativeai as genai
 
 
 @dataclass
 class ImageAnalysis:
-    """Structure pour stocker l'analyse d'une image"""
-    image_id: str
-    image_name: str
+    """Résultat d'analyse d'une image"""
+    image_id: str = ""
+    image_name: str = ""
     description: str = ""
     subjects: List[str] = field(default_factory=list)
     setting: str = ""
@@ -36,23 +39,21 @@ class ImageAnalysis:
             'mood': self.mood,
             'colors': self.colors,
             'actions': self.actions,
-            'objects': self.objects,
-            'narrative_potential': self.narrative_potential,
-            'technical_notes': self.technical_notes
+            'objects': self.objects
         }
 
 
 @dataclass
 class GlobalAnalysis:
-    """Structure pour l'analyse globale de toutes les images"""
-    individual_analyses: List[ImageAnalysis]
-    recurring_subjects: List[Dict]
-    recurring_settings: List[str]
-    dominant_moods: List[str]
-    color_palette: List[str]
-    thematic_clusters: List[Dict]
-    narrative_threads: List[str]
-    visual_style: str
+    """Analyse globale d'un ensemble d'images"""
+    individual_analyses: List[ImageAnalysis] = field(default_factory=list)
+    recurring_subjects: List[Dict] = field(default_factory=list)
+    recurring_settings: List[str] = field(default_factory=list)
+    dominant_moods: List[str] = field(default_factory=list)
+    color_palette: List[str] = field(default_factory=list)
+    thematic_clusters: List[Dict] = field(default_factory=list)
+    narrative_threads: List[str] = field(default_factory=list)
+    visual_style: str = ""
     
     def to_dict(self) -> Dict:
         return {
@@ -68,283 +69,308 @@ class GlobalAnalysis:
 
 
 class ImageAnalyzer:
-    """Analyseur d'images utilisant Google Gemini"""
+    """
+    Analyseur d'images optimisé pour gros volumes
     
-    def __init__(self, api_key: Optional[str] = None):
+    Utilise le batching : plusieurs images analysées par requête
+    Modèle : gemini-2.5-flash (dernière version, plus rapide et performante)
+    
+    Quotas compte payant : ~2000 RPM, pas de limite journalière stricte
+    """
+    
+    def __init__(self, api_key: Optional[str] = None, model_name: str = 'gemini-2.5-flash'):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not self.api_key:
-            raise ValueError("Clé API Gemini non trouvée. Définissez GEMINI_API_KEY.")
+            raise ValueError("Clé API Gemini non trouvée")
         
         genai.configure(api_key=self.api_key)
-        # Utiliser Gemini 2.5 Flash (modèle le plus récent)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-        self.model_pro = genai.GenerativeModel('gemini-2.5-flash')
         
-        # Configuration des limites de rate
-        self.requests_per_minute = 60
+        # Utiliser gemini-2.5-flash (dernière version)
+        self.model_name = model_name
+        self.model = genai.GenerativeModel(model_name)
+        
+        # Configuration du batching - optimisé pour compte payant
+        self.batch_size = 10  # Images par requête
+        self.min_delay = 0.5  # Délai minimal entre requêtes (compte payant = quota élevé)
         self.last_request_time = 0
-        self.request_count = 0
+        self.total_requests = 0
     
-    def _rate_limit(self):
-        """Gère le rate limiting"""
-        current_time = time.time()
-        
-        if current_time - self.last_request_time >= 60:
-            self.request_count = 0
-            self.last_request_time = current_time
-        
-        if self.request_count >= self.requests_per_minute:
-            sleep_time = 60 - (current_time - self.last_request_time)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            self.request_count = 0
-            self.last_request_time = time.time()
-        
-        self.request_count += 1
+    def _wait_for_rate_limit(self):
+        """Respecte le rate limit entre les requêtes"""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_delay:
+            time.sleep(self.min_delay - elapsed)
+        self.last_request_time = time.time()
     
-    def _prepare_image(self, image_data: Dict) -> Dict:
-        """Prépare une image pour l'API Gemini"""
-        if 'base64' in image_data:
-            return {
-                'mime_type': image_data.get('mime_type', 'image/jpeg'),
-                'data': image_data['base64']
-            }
-        elif 'data' in image_data:
-            b64 = base64.b64encode(image_data['data']).decode('utf-8')
-            return {
-                'mime_type': image_data.get('mime_type', 'image/jpeg'),
-                'data': b64
-            }
-        else:
-            raise ValueError(f"Format d'image non supporté pour {image_data.get('name', 'unknown')}")
-    
-    def analyze_single_image(self, image_data: Dict) -> ImageAnalysis:
-        """Analyse une seule image"""
-        self._rate_limit()
-        
-        prompt = """Analyse cette image pour un projet de film/clip musical.
-
-Réponds en JSON avec cette structure exacte :
-{
-    "description": "Description détaillée de la scène (2-3 phrases)",
-    "subjects": ["liste des personnages/sujets présents"],
-    "setting": "description du lieu/décor",
-    "mood": "atmosphère/ambiance dominante",
-    "colors": ["couleurs dominantes"],
-    "actions": ["actions/gestes visibles"],
-    "objects": ["objets significatifs"],
-    "narrative_potential": "potentiel narratif de cette image (1-2 phrases)",
-    "technical_notes": "notes techniques : cadrage, lumière, composition"
-}
-
-Sois précis et cinématographique dans tes descriptions."""
-
-        try:
-            image_part = self._prepare_image(image_data)
-            
-            response = self.model.generate_content([
-                prompt,
-                {'mime_type': image_part['mime_type'], 'data': base64.b64decode(image_part['data'])}
-            ])
-            
-            # Parser la réponse JSON
-            text = response.text
-            
-            # Nettoyer le JSON si nécessaire
-            if '```json' in text:
-                text = text.split('```json')[1].split('```')[0]
-            elif '```' in text:
-                text = text.split('```')[1].split('```')[0]
-            
-            import json
-            data = json.loads(text.strip())
-            
-            return ImageAnalysis(
-                image_id=image_data.get('id', ''),
-                image_name=image_data.get('name', ''),
-                description=data.get('description', ''),
-                subjects=data.get('subjects', []),
-                setting=data.get('setting', ''),
-                mood=data.get('mood', ''),
-                colors=data.get('colors', []),
-                actions=data.get('actions', []),
-                objects=data.get('objects', []),
-                narrative_potential=data.get('narrative_potential', ''),
-                technical_notes=data.get('technical_notes', '')
-            )
-            
-        except Exception as e:
-            print(f"Erreur lors de l'analyse de {image_data.get('name', 'unknown')}: {e}")
-            return ImageAnalysis(
-                image_id=image_data.get('id', ''),
-                image_name=image_data.get('name', ''),
-                description=f"Erreur d'analyse: {str(e)}"
-            )
+    def _make_request_with_retry(self, content, max_retries=3):
+        """Fait une requête avec retry automatique en cas d'erreur"""
+        for attempt in range(max_retries):
+            try:
+                self._wait_for_rate_limit()
+                response = self.model.generate_content(content)
+                self.total_requests += 1
+                return response.text
+            except Exception as e:
+                error_str = str(e).lower()
+                if '429' in str(e) or 'quota' in error_str or 'rate' in error_str:
+                    # Compte payant : attente courte puis retry
+                    wait_time = 5 + (attempt * 5)
+                    print(f"Rate limit temporaire - attente {wait_time}s (tentative {attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                elif 'not found' in error_str or 'not supported' in error_str:
+                    # Modèle non disponible, essayer un fallback
+                    if self.model_name != 'gemini-2.0-flash':
+                        print(f"Modèle {self.model_name} non disponible, utilisation de gemini-2.0-flash")
+                        self.model_name = 'gemini-2.0-flash'
+                        self.model = genai.GenerativeModel('gemini-2.0-flash')
+                        continue
+                    raise
+                else:
+                    if attempt == max_retries - 1:
+                        raise
+                    time.sleep(2)
+        return None
     
     def analyze_batch(
         self, 
         images: List[Dict],
-        batch_size: int = 10,
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> GlobalAnalysis:
         """
-        Analyse un lot d'images et produit une analyse globale
+        Point d'entrée principal - Analyse un ensemble d'images
+        
+        Utilise le batching pour optimiser le nombre de requêtes:
+        - 100 images = ~12 requêtes au lieu de 100
+        - Respecte les rate limits automatiquement
         
         Args:
-            images: Liste des images à analyser
-            batch_size: Nombre d'images par lot pour l'analyse groupée
-            progress_callback: Callback pour la progression (0-1, message)
+            images: Liste de dicts avec 'base64', 'name', 'mime_type'
+            progress_callback: Fonction(progress: 0-1, message: str)
+        
+        Returns:
+            GlobalAnalysis avec toutes les analyses
         """
-        total_images = len(images)
-        individual_analyses = []
+        total = len(images)
+        all_analyses = []
         
-        # Phase 1: Analyse individuelle de chaque image
-        for idx, image in enumerate(images):
-            if progress_callback:
-                progress = idx / total_images
-                progress_callback(progress, f"Analyse de {image.get('name', f'image {idx+1}')}")
+        if progress_callback:
+            progress_callback(0, f"Démarrage de l'analyse de {total} images...")
+        
+        # Nombre de batches nécessaires
+        num_batches = (total + self.batch_size - 1) // self.batch_size
+        
+        # Traiter par lots
+        for batch_idx, batch_start in enumerate(range(0, total, self.batch_size)):
+            batch_end = min(batch_start + self.batch_size, total)
+            batch = images[batch_start:batch_end]
             
-            analysis = self.analyze_single_image(image)
-            individual_analyses.append(analysis)
+            if progress_callback:
+                progress = (batch_idx / num_batches) * 0.8
+                progress_callback(progress, f"Lot {batch_idx+1}/{num_batches} ({batch_start+1}-{batch_end}/{total})")
+            
+            # Analyser le lot
+            batch_analyses = self._analyze_batch(batch, batch_start)
+            all_analyses.extend(batch_analyses)
         
         if progress_callback:
-            progress_callback(0.8, "Synthèse des analyses...")
+            progress_callback(0.85, "Synthèse globale...")
         
-        # Phase 2: Analyse globale et synthèse
-        global_analysis = self._synthesize_analyses(individual_analyses)
+        # Générer la synthèse globale
+        global_analysis = self._generate_global_synthesis(all_analyses)
+        global_analysis.individual_analyses = all_analyses
         
         if progress_callback:
-            progress_callback(1.0, "Analyse complète")
+            progress_callback(1.0, f"✓ {len(all_analyses)} images analysées ({self.total_requests} requêtes)")
         
         return global_analysis
     
-    def _synthesize_analyses(self, analyses: List[ImageAnalysis]) -> GlobalAnalysis:
-        """Synthétise les analyses individuelles en une analyse globale"""
+    def _analyze_batch(self, batch: List[Dict], start_idx: int) -> List[ImageAnalysis]:
+        """Analyse un lot d'images en une seule requête"""
         
-        # Collecter toutes les données
+        # Construire le prompt multi-images
+        prompt = f"""Analyse ces {len(batch)} images pour un projet audiovisuel.
+
+Pour CHAQUE image (dans l'ordre), fournis une analyse JSON:
+[
+  {{
+    "index": 0,
+    "description": "description détaillée de la scène (2-3 phrases)",
+    "subjects": ["sujet principal", "autres sujets"],
+    "setting": "lieu/environnement",
+    "mood": "ambiance/émotion dominante",
+    "colors": ["couleurs principales"],
+    "actions": ["actions visibles"],
+    "objects": ["objets notables"]
+  }},
+  ...
+]
+
+IMPORTANT: Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
+Analyse les {len(batch)} images dans l'ordre où elles apparaissent."""
+
+        # Construire le contenu multimodal
+        content_parts = [prompt]
+        
+        for img in batch:
+            if img.get('base64'):
+                try:
+                    image_part = {
+                        'mime_type': img.get('mime_type', 'image/jpeg'),
+                        'data': base64.b64decode(img['base64'])
+                    }
+                    content_parts.append(image_part)
+                except Exception as e:
+                    print(f"Erreur décodage image: {e}")
+        
+        # Faire la requête
+        try:
+            response_text = self._make_request_with_retry(content_parts)
+            
+            if not response_text:
+                return self._create_empty_analyses(batch, start_idx)
+            
+            # Parser le JSON
+            json_text = self._extract_json(response_text)
+            analyses_data = json.loads(json_text)
+            
+            # S'assurer que c'est une liste
+            if not isinstance(analyses_data, list):
+                analyses_data = [analyses_data]
+            
+            # Créer les objets ImageAnalysis
+            results = []
+            for i, img in enumerate(batch):
+                analysis_data = analyses_data[i] if i < len(analyses_data) else {}
+                
+                results.append(ImageAnalysis(
+                    image_id=img.get('id', f'img_{start_idx + i}'),
+                    image_name=img.get('name', f'image_{start_idx + i}'),
+                    description=analysis_data.get('description', ''),
+                    subjects=analysis_data.get('subjects', []),
+                    setting=analysis_data.get('setting', ''),
+                    mood=analysis_data.get('mood', ''),
+                    colors=analysis_data.get('colors', []),
+                    actions=analysis_data.get('actions', []),
+                    objects=analysis_data.get('objects', [])
+                ))
+            
+            return results
+            
+        except json.JSONDecodeError as e:
+            print(f"Erreur parsing JSON: {e}")
+            return self._create_empty_analyses(batch, start_idx)
+        except Exception as e:
+            print(f"Erreur analyse batch: {e}")
+            return self._create_empty_analyses(batch, start_idx)
+    
+    def _extract_json(self, text: str) -> str:
+        """Extrait le JSON d'une réponse"""
+        if '```json' in text:
+            return text.split('```json')[1].split('```')[0].strip()
+        elif '```' in text:
+            return text.split('```')[1].split('```')[0].strip()
+        
+        # Chercher le début du JSON
+        start = text.find('[')
+        if start == -1:
+            start = text.find('{')
+        
+        if start != -1:
+            return text[start:].strip()
+        
+        return text.strip()
+    
+    def _create_empty_analyses(self, batch: List[Dict], start_idx: int) -> List[ImageAnalysis]:
+        """Crée des analyses vides en cas d'erreur"""
+        return [
+            ImageAnalysis(
+                image_id=img.get('id', f'img_{start_idx + i}'),
+                image_name=img.get('name', f'image_{start_idx + i}')
+            )
+            for i, img in enumerate(batch)
+        ]
+    
+    def _generate_global_synthesis(self, analyses: List[ImageAnalysis]) -> GlobalAnalysis:
+        """Génère une synthèse globale de toutes les analyses"""
+        
+        # Agréger les données
         all_subjects = []
         all_settings = []
         all_moods = []
         all_colors = []
+        descriptions_sample = []
         
-        for analysis in analyses:
-            all_subjects.extend(analysis.subjects)
-            all_settings.append(analysis.setting)
-            all_moods.append(analysis.mood)
-            all_colors.extend(analysis.colors)
+        for a in analyses:
+            all_subjects.extend(a.subjects)
+            if a.setting:
+                all_settings.append(a.setting)
+            if a.mood:
+                all_moods.append(a.mood)
+            all_colors.extend(a.colors)
+            if a.description:
+                descriptions_sample.append(f"[{a.image_name}] {a.description}")
         
         # Compter les occurrences
-        from collections import Counter
-        
         subject_counts = Counter(all_subjects)
+        recurring_subjects = [{'name': s, 'count': c} for s, c in subject_counts.most_common(15)]
+        
         setting_counts = Counter(all_settings)
+        recurring_settings = [s for s, _ in setting_counts.most_common(5)]
+        
         mood_counts = Counter(all_moods)
+        dominant_moods = [m for m, _ in mood_counts.most_common(5)]
+        
         color_counts = Counter(all_colors)
+        color_palette = [c for c, _ in color_counts.most_common(10)]
         
-        # Identifier les éléments récurrents
-        recurring_subjects = [
-            {'name': s, 'count': c} 
-            for s, c in subject_counts.most_common(10) 
-            if c > 1
-        ]
+        # Demander une synthèse narrative à Gemini
+        synthesis_prompt = f"""Analyse ces données pour créer une synthèse narrative:
+
+ÉCHANTILLON D'IMAGES ({len(analyses)} total):
+{chr(10).join(descriptions_sample[:25])}
+
+SUJETS RÉCURRENTS: {', '.join([s['name'] for s in recurring_subjects[:10]])}
+LIEUX: {', '.join(recurring_settings[:5])}
+AMBIANCES: {', '.join(dominant_moods[:5])}
+PALETTE: {', '.join(color_palette[:8])}
+
+Génère un JSON:
+{{
+    "visual_style": "description du style visuel global (1-2 phrases)",
+    "narrative_threads": ["potentiel narratif 1", "potentiel 2", "potentiel 3"],
+    "thematic_clusters": [
+        {{"theme": "thème identifié", "description": "explication courte"}}
+    ]
+}}
+
+Réponds UNIQUEMENT avec le JSON."""
+
+        try:
+            response = self._make_request_with_retry(synthesis_prompt)
+            
+            if response:
+                json_text = self._extract_json(response)
+                synthesis = json.loads(json_text)
+                
+                return GlobalAnalysis(
+                    recurring_subjects=recurring_subjects,
+                    recurring_settings=recurring_settings,
+                    dominant_moods=dominant_moods,
+                    color_palette=color_palette,
+                    visual_style=synthesis.get('visual_style', ''),
+                    narrative_threads=synthesis.get('narrative_threads', []),
+                    thematic_clusters=synthesis.get('thematic_clusters', [])
+                )
+        except Exception as e:
+            print(f"Erreur synthèse: {e}")
         
-        recurring_settings = [s for s, c in setting_counts.most_common(5) if c > 1]
-        dominant_moods = [m for m, c in mood_counts.most_common(5)]
-        color_palette = [c for c, _ in color_counts.most_common(8)]
-        
-        # Générer l'analyse thématique avec Gemini
-        thematic_analysis = self._generate_thematic_analysis(analyses)
-        
+        # Retour par défaut sans synthèse IA
         return GlobalAnalysis(
-            individual_analyses=analyses,
             recurring_subjects=recurring_subjects,
             recurring_settings=recurring_settings,
             dominant_moods=dominant_moods,
             color_palette=color_palette,
-            thematic_clusters=thematic_analysis.get('clusters', []),
-            narrative_threads=thematic_analysis.get('threads', []),
-            visual_style=thematic_analysis.get('style', '')
+            visual_style="Style varié à déterminer",
+            narrative_threads=["Narration à développer"],
+            thematic_clusters=[]
         )
-    
-    def _generate_thematic_analysis(self, analyses: List[ImageAnalysis]) -> Dict:
-        """Génère une analyse thématique approfondie"""
-        
-        # Préparer le résumé des analyses pour le prompt
-        summaries = []
-        for a in analyses[:50]:  # Limiter pour le contexte
-            summaries.append(f"- {a.image_name}: {a.description} | Mood: {a.mood} | Setting: {a.setting}")
-        
-        summaries_text = "\n".join(summaries)
-        
-        prompt = f"""En tant qu'analyste cinématographique, analyse cet ensemble d'images pour un projet audiovisuel.
-
-RÉSUMÉ DES IMAGES ANALYSÉES:
-{summaries_text}
-
-Réponds en JSON avec cette structure :
-{{
-    "clusters": [
-        {{"theme": "nom du cluster thématique", "images": ["noms des images"], "description": "description du cluster"}}
-    ],
-    "threads": ["fil narratif potentiel 1", "fil narratif potentiel 2", ...],
-    "style": "description du style visuel global (esthétique, influences, références cinématographiques)"
-}}
-
-Identifie 3-5 clusters thématiques et 3-5 fils narratifs potentiels."""
-
-        try:
-            self._rate_limit()
-            response = self.model_pro.generate_content(prompt)
-            
-            text = response.text
-            if '```json' in text:
-                text = text.split('```json')[1].split('```')[0]
-            elif '```' in text:
-                text = text.split('```')[1].split('```')[0]
-            
-            import json
-            return json.loads(text.strip())
-            
-        except Exception as e:
-            print(f"Erreur lors de l'analyse thématique: {e}")
-            return {
-                'clusters': [],
-                'threads': [],
-                'style': 'Analyse non disponible'
-            }
-    
-    def analyze_batch_concurrent(
-        self,
-        images: List[Dict],
-        max_workers: int = 5,
-        progress_callback: Optional[Callable[[float, str], None]] = None
-    ) -> GlobalAnalysis:
-        """
-        Analyse les images en parallèle (plus rapide mais attention au rate limiting)
-        """
-        total = len(images)
-        completed = 0
-        individual_analyses = []
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self.analyze_single_image, img): img 
-                for img in images
-            }
-            
-            for future in as_completed(futures):
-                completed += 1
-                if progress_callback:
-                    progress_callback(
-                        completed / total,
-                        f"Analysé {completed}/{total} images"
-                    )
-                
-                try:
-                    analysis = future.result()
-                    individual_analyses.append(analysis)
-                except Exception as e:
-                    img = futures[future]
-                    print(f"Erreur pour {img.get('name', 'unknown')}: {e}")
-        
-        return self._synthesize_analyses(individual_analyses)

@@ -1,20 +1,19 @@
 """
 🎬 PITCH GENERATOR
 Application de génération de pitchs créatifs à partir d'images
-Design inspiré Apple - Minimaliste et élégant
 """
 
 import streamlit as st
 import os
 from datetime import datetime
-from src.drive_loader import DriveLoader, DriveLoaderLite, DriveLoaderManual
+from src.drive_loader import DriveLoader, DriveLoaderManual
 from src.image_analyzer import ImageAnalyzer
 from src.narrative_builder import NarrativeBuilder
 from src.pdf_generator import PDFGenerator
 from src.project_manager import ProjectManager
-from src.video_prompt_generator import VideoPromptGenerator, ImageToVideoPrompt
+from src.video_prompt_generator import VideoPromptGenerator
 
-# Configuration de la page
+# Configuration
 st.set_page_config(
     page_title="Pitch Generator",
     page_icon="🎬",
@@ -22,219 +21,22 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS Apple-style
+# CSS minimal - sans toucher aux inputs
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    :root {
-        --bg-primary: #ffffff;
-        --bg-secondary: #f5f5f7;
-        --bg-tertiary: #e8e8ed;
-        --text-primary: #1d1d1f;
-        --text-secondary: #86868b;
-        --accent: #0071e3;
-        --accent-hover: #0077ed;
-        --border: #d2d2d7;
-        --shadow: rgba(0, 0, 0, 0.04);
-        --radius: 12px;
-        --radius-lg: 20px;
-    }
-    
-    .stApp {
-        background: var(--bg-secondary);
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    
-    .main .block-container {
-        max-width: 1100px;
-        padding: 2rem 1rem;
-    }
-    
-    .app-header {
-        text-align: center;
-        padding: 2.5rem 0 1.5rem;
-    }
-    
-    .app-title {
-        font-size: 2.75rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        letter-spacing: -0.03em;
-        margin: 0;
-    }
-    
-    .app-subtitle {
-        font-size: 1.125rem;
-        font-weight: 400;
-        color: var(--text-secondary);
-        margin-top: 0.5rem;
-    }
-    
-    .card {
-        background: var(--bg-primary);
-        border-radius: var(--radius-lg);
-        padding: 1.75rem;
-        margin-bottom: 1.25rem;
-        box-shadow: 0 2px 12px var(--shadow), 0 0 1px rgba(0,0,0,0.08);
-    }
-    
-    .card-title {
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        color: var(--text-secondary);
-        margin-bottom: 1rem;
-    }
-    
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea {
-        background: var(--bg-secondary) !important;
-        border: 1px solid transparent !important;
-        border-radius: var(--radius) !important;
-        padding: 0.875rem 1rem !important;
-        font-family: 'Inter', sans-serif !important;
-        font-size: 0.95rem !important;
-        color: var(--text-primary) !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    .stTextInput > div > div > input:focus,
-    .stTextArea > div > div > textarea:focus {
-        border-color: var(--accent) !important;
-        box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12) !important;
-        background: var(--bg-primary) !important;
-    }
-    
-    .stSelectbox > div > div {
-        background: var(--bg-secondary) !important;
-        border: none !important;
-        border-radius: var(--radius) !important;
-    }
-    
-    .stButton > button {
-        background: var(--accent) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 980px !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
-        font-size: 1rem !important;
-        padding: 0.75rem 2rem !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    .stButton > button:hover {
-        background: var(--accent-hover) !important;
-        transform: scale(1.02);
-        box-shadow: 0 4px 16px rgba(0, 113, 227, 0.25) !important;
-    }
-    
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: var(--bg-secondary);
-        border-radius: var(--radius);
-        padding: 4px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: 8px;
-        color: var(--text-secondary);
-        font-weight: 500;
-        padding: 0.5rem 1rem;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: var(--bg-primary) !important;
-        color: var(--text-primary) !important;
-        box-shadow: 0 1px 3px var(--shadow);
-    }
-    
-    .progress-container {
-        background: var(--bg-primary);
-        border-radius: var(--radius-lg);
-        padding: 2rem;
-        text-align: center;
-        margin: 1rem 0;
-    }
-    
-    .progress-bar-bg {
-        background: var(--bg-tertiary);
-        border-radius: 6px;
-        height: 6px;
-        overflow: hidden;
-        margin: 1rem auto;
-        max-width: 300px;
-    }
-    
-    .progress-bar-fill {
-        background: linear-gradient(90deg, var(--accent), #34c759);
-        height: 100%;
-        border-radius: 6px;
-        transition: width 0.3s ease;
-    }
-    
-    .progress-text {
-        font-size: 0.875rem;
-        color: var(--text-secondary);
-    }
-    
-    .progress-percent {
-        font-size: 2rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        margin: 0.5rem 0;
-    }
-    
-    .result-content {
-        background: var(--bg-secondary);
-        border-radius: var(--radius);
-        padding: 1.5rem;
-        font-size: 0.95rem;
-        line-height: 1.7;
-        color: var(--text-primary);
-        white-space: pre-wrap;
-    }
-    
-    .info-box {
-        background: #f0f7ff;
-        border-radius: var(--radius);
-        padding: 1rem;
-        font-size: 0.85rem;
-        color: #1d4ed8;
-        margin-top: 0.75rem;
-        border-left: 3px solid var(--accent);
-    }
-    
-    .stDownloadButton > button {
-        background: var(--bg-secondary) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 980px !important;
-        font-weight: 500 !important;
-    }
-    
-    .stDownloadButton > button:hover {
-        background: var(--bg-tertiary) !important;
-        border-color: var(--accent) !important;
-        color: var(--accent) !important;
-    }
-    
-    .stAlert {
-        border-radius: var(--radius) !important;
-        border: none !important;
-    }
-    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     
-    .mode-selector {
-        display: flex;
-        gap: 0.75rem;
-        margin-bottom: 1rem;
+    .main-title {
+        text-align: center;
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    .subtitle {
+        text-align: center;
+        color: #666;
+        margin-bottom: 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -242,42 +44,30 @@ st.markdown("""
 
 def init_session_state():
     """Initialise les variables de session"""
-    defaults = {
-        'analysis_results': None,
-        'pitch': None,
-        'sequencer': None,
-        'decoupage': None,
-        'video_prompts': None,
-        'images_data': [],
-        'processing': False,
-        'current_project': None,
-        'input_mode': "Upload",
-        'video_platform': 'veo3'
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-
-def render_header():
-    """Affiche l'en-tête"""
-    st.markdown("""
-        <div class="app-header">
-            <h1 class="app-title">🎬 Pitch Generator</h1>
-            <p class="app-subtitle">Transformez vos images en narrations cinématographiques</p>
-        </div>
-    """, unsafe_allow_html=True)
+    if 'pitch' not in st.session_state:
+        st.session_state.pitch = None
+    if 'sequencer' not in st.session_state:
+        st.session_state.sequencer = None
+    if 'decoupage' not in st.session_state:
+        st.session_state.decoupage = None
+    if 'video_prompts' not in st.session_state:
+        st.session_state.video_prompts = None
+    if 'images_data' not in st.session_state:
+        st.session_state.images_data = []
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
 
 
 def render_sidebar():
-    """Barre latérale avec configuration"""
+    """Barre latérale"""
     with st.sidebar:
-        st.markdown("### ⚙️ Configuration API")
+        st.header("⚙️ Configuration")
         
         gemini_key = st.text_input(
             "Clé API Gemini",
             type="password",
-            value=os.getenv("GEMINI_API_KEY", "")
+            value=os.getenv("GEMINI_API_KEY", ""),
+            key="sidebar_gemini_key"
         )
         if gemini_key:
             os.environ["GEMINI_API_KEY"] = gemini_key
@@ -285,435 +75,123 @@ def render_sidebar():
         google_key = st.text_input(
             "Clé API Google Drive",
             type="password",
-            value=os.getenv("GOOGLE_API_KEY", "")
+            value=os.getenv("GOOGLE_API_KEY", ""),
+            key="sidebar_google_key"
         )
         if google_key:
             os.environ["GOOGLE_API_KEY"] = google_key
         
         st.divider()
-        st.markdown("### 📁 Projets sauvegardés")
         
-        project_manager = ProjectManager()
-        projects = project_manager.list_projects()
+        st.header("📁 Projets")
+        pm = ProjectManager()
+        projects = pm.list_projects()
         
         if projects:
-            for project in projects[:5]:
-                if st.button(f"📄 {project['name']}", key=f"load_{project['id']}", use_container_width=True):
-                    loaded = project_manager.load_project(project['id'])
-                    if loaded:
-                        st.session_state.pitch = loaded.get('pitch')
-                        st.session_state.sequencer = loaded.get('sequencer')
-                        st.session_state.decoupage = loaded.get('decoupage')
-                        st.session_state.video_prompts = loaded.get('video_prompts')
+            for p in projects[:5]:
+                if st.button(f"📄 {p['name']}", key=f"proj_{p['id']}"):
+                    data = pm.load_project(p['id'])
+                    if data:
+                        st.session_state.pitch = data.get('pitch')
+                        st.session_state.sequencer = data.get('sequencer')
+                        st.session_state.decoupage = data.get('decoupage')
+                        st.session_state.video_prompts = data.get('video_prompts')
                         st.rerun()
         else:
-            st.caption("Aucun projet")
+            st.caption("Aucun projet sauvegardé")
 
 
-def render_input_section():
-    """Section d'entrée des données"""
-    
-    # Mode d'entrée
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<p class="card-title">📁 Source des images</p>', unsafe_allow_html=True)
-    
-    input_mode = st.radio(
-        "Mode",
-        ["Upload", "Google Drive", "Liens"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    st.session_state.input_mode = input_mode
-    
-    drive_url = None
-    uploaded_files = None
-    image_links = None
-    
-    if input_mode == "Google Drive":
-        drive_url = st.text_input(
-            "Lien du dossier Google Drive",
-            placeholder="https://drive.google.com/drive/folders/..."
-        )
-        st.markdown("""
-            <div class="info-box">
-                💡 Le dossier doit être partagé avec "Tous ceux qui ont le lien"
-            </div>
-        """, unsafe_allow_html=True)
-    
-    elif input_mode == "Upload":
-        uploaded_files = st.file_uploader(
-            "Sélectionnez vos images",
-            type=['jpg', 'jpeg', 'png', 'gif', 'webp'],
-            accept_multiple_files=True
-        )
-        if uploaded_files:
-            st.success(f"✓ {len(uploaded_files)} images sélectionnées")
-    
-    else:
-        image_links = st.text_area(
-            "Liens des images (un par ligne)",
-            placeholder="https://drive.google.com/file/d/xxx/view",
-            height=100
-        )
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Brief
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<p class="card-title">✏️ Brief créatif</p>', unsafe_allow_html=True)
-    
-    brief = st.text_area(
-        "Décrivez votre vision",
-        placeholder="Type de projet, ton souhaité, thématiques, références visuelles...",
-        height=120,
-        label_visibility="collapsed"
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Options
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<p class="card-title">⚙️ Paramètres</p>', unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        format_type = st.selectbox("Format", ["Clip musical", "Court-métrage", "Documentaire", "Publicité", "Vidéo artistique"])
-    with col2:
-        duration = st.selectbox("Durée", ["1-2 min", "3-5 min", "5-10 min", "10-20 min", "20+ min"])
-    with col3:
-        tone = st.selectbox("Tonalité", ["Naturaliste", "Poétique", "Onirique", "Documentaire", "Narratif"])
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    modes_map = {
-        "Upload": "📤 Upload direct",
-        "Google Drive": "🔗 Lien Google Drive (dossier partagé)",
-        "Liens": "📋 Liste de liens"
-    }
-    
-    return {
-        'mode': modes_map[input_mode],
-        'drive_url': drive_url,
-        'uploaded_files': uploaded_files,
-        'image_links': image_links,
-        'brief': brief,
-        'format_type': format_type,
-        'duration': duration,
-        'tone': tone
-    }
-
-
-def render_progress(progress: float, message: str):
-    """Barre de progression"""
-    st.markdown(f"""
-        <div class="progress-container">
-            <p class="progress-text">{message}</p>
-            <p class="progress-percent">{int(progress)}%</p>
-            <div class="progress-bar-bg">
-                <div class="progress-bar-fill" style="width: {progress}%;"></div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_results():
-    """Affiche les résultats"""
-    if not any([st.session_state.pitch, st.session_state.sequencer, st.session_state.decoupage]):
-        return
-    
-    st.markdown("---")
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<p class="card-title">📄 Résultats générés</p>', unsafe_allow_html=True)
-    
-    tab_pitch, tab_seq, tab_dec, tab_video, tab_images = st.tabs(["Pitch", "Séquencier", "Découpage", "🎬 Prompts Vidéo", "Images"])
-    
-    with tab_pitch:
-        if st.session_state.pitch:
-            st.markdown(f'<div class="result-content">{st.session_state.pitch}</div>', unsafe_allow_html=True)
-    
-    with tab_seq:
-        if st.session_state.sequencer:
-            st.markdown(f'<div class="result-content">{st.session_state.sequencer}</div>', unsafe_allow_html=True)
-    
-    with tab_dec:
-        if st.session_state.decoupage:
-            st.markdown(f'<div class="result-content">{st.session_state.decoupage}</div>', unsafe_allow_html=True)
-    
-    with tab_video:
-        render_video_prompts_tab()
-    
-    with tab_images:
-        if st.session_state.images_data:
-            cols = st.columns(6)
-            for idx, img in enumerate(st.session_state.images_data[:24]):
-                with cols[idx % 6]:
-                    if img.get('thumbnail'):
-                        st.image(img['thumbnail'], use_container_width=True)
-                    st.caption(img.get('name', '')[:15])
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Export
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<p class="card-title">💾 Exporter</p>', unsafe_allow_html=True)
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        if st.button("📥 PDF", use_container_width=True):
-            export_pdf()
-    
-    with col2:
-        if st.session_state.pitch:
-            md_content = f"# Pitch\n\n{st.session_state.pitch}\n\n---\n\n# Séquencier\n\n{st.session_state.sequencer or ''}\n\n---\n\n# Découpage\n\n{st.session_state.decoupage or ''}"
-            st.download_button(
-                "📥 Markdown",
-                md_content,
-                file_name=f"pitch_{datetime.now().strftime('%Y%m%d')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-    
-    with col3:
-        if st.session_state.video_prompts:
-            prompts_content = format_video_prompts_export()
-            st.download_button(
-                "🎬 Prompts",
-                prompts_content,
-                file_name=f"video_prompts_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-    
-    with col4:
-        project_name = st.text_input("Nom du projet", placeholder="Mon projet", label_visibility="collapsed")
-    
-    with col5:
-        if st.button("💾 Sauvegarder", use_container_width=True):
-            if project_name:
-                save_project(project_name)
-                st.success("✓ Sauvegardé")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def render_video_prompts_tab():
-    """Affiche l'onglet des prompts vidéo"""
-    
-    st.markdown("### 🎬 Génération de prompts vidéo")
-    st.markdown("Générez des prompts optimisés pour vos outils de génération vidéo IA.")
-    
-    # Sélection de la plateforme
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        platform = st.selectbox(
-            "Plateforme cible",
-            options=['veo3', 'kling', 'runway'],
-            format_func=lambda x: {
-                'veo3': '🎬 Google Veo 3',
-                'kling': '🎥 Kling 2.6', 
-                'runway': '🎞️ Runway Gen-4'
-            }.get(x, x),
-            key="video_platform_select"
-        )
-    
-    with col2:
-        default_duration = st.number_input("Durée par défaut (sec)", min_value=2, max_value=30, value=5)
-    
-    # Style visuel
-    style_context = st.text_input(
-        "Style visuel global (optionnel)",
-        placeholder="ex: cinematic, film grain, natural lighting, documentary style..."
-    )
-    
-    # Bouton de génération
-    if st.button("✨ Générer les prompts vidéo", use_container_width=True):
-        if st.session_state.decoupage:
-            with st.spinner("Génération des prompts en cours..."):
-                generate_video_prompts(platform, style_context, default_duration)
-        else:
-            st.warning("Veuillez d'abord générer le découpage")
-    
-    # Affichage des prompts générés
-    if st.session_state.video_prompts:
-        st.markdown("---")
-        st.markdown(f"### Prompts générés ({len(st.session_state.video_prompts)} plans)")
-        
-        for idx, prompt_data in enumerate(st.session_state.video_prompts):
-            with st.expander(
-                f"**Seq {prompt_data.get('sequence_number', '?')} - Plan {prompt_data.get('shot_number', idx+1)}** | "
-                f"{prompt_data.get('shot_value', '')} | {prompt_data.get('camera_movement', '')} | "
-                f"{prompt_data.get('duration', 5)}s"
-            ):
-                # Info image de référence
-                if prompt_data.get('image_ref'):
-                    st.caption(f"📷 Image de référence : {prompt_data.get('image_ref')}")
-                
-                # Le prompt
-                st.code(prompt_data.get('prompt', ''), language=None)
-                
-                # Bouton copier
-                st.button(
-                    "📋 Copier",
-                    key=f"copy_{idx}",
-                    on_click=lambda p=prompt_data.get('prompt', ''): st.write(p)
-                )
-
-
-def generate_video_prompts(platform: str, style_context: str, default_duration: int):
-    """Génère les prompts vidéo depuis le découpage"""
-    try:
-        generator = VideoPromptGenerator()
-        prompts = generator.generate_prompts_from_decoupage(
-            decoupage_text=st.session_state.decoupage,
-            platform=platform,
-            style_context=style_context,
-            default_duration=default_duration
-        )
-        st.session_state.video_prompts = prompts
-        st.success(f"✓ {len(prompts)} prompts générés pour {platform.upper()}")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
-
-
-def format_video_prompts_export() -> str:
-    """Formate les prompts pour l'export"""
-    if not st.session_state.video_prompts:
-        return ""
-    
-    lines = [
-        "=" * 60,
-        "PROMPTS VIDÉO - PITCH GENERATOR",
-        f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}",
-        "=" * 60,
-        ""
-    ]
-    
-    current_seq = None
-    for p in st.session_state.video_prompts:
-        if p.get('sequence_number') != current_seq:
-            current_seq = p.get('sequence_number')
-            lines.append("")
-            lines.append("-" * 40)
-            lines.append(f"SÉQUENCE {current_seq} - {p.get('sequence_title', '')}")
-            lines.append("-" * 40)
-        
-        lines.append("")
-        lines.append(f"PLAN {p.get('shot_number', '?')} | {p.get('shot_value', '')} | {p.get('camera_movement', '')} | {p.get('duration', 5)}s")
-        if p.get('image_ref'):
-            lines.append(f"Image ref: {p.get('image_ref')}")
-        lines.append(f"Plateforme: {p.get('platform_name', '')}")
-        lines.append("")
-        lines.append("PROMPT:")
-        lines.append(p.get('prompt', ''))
-        lines.append("")
-    
-    return "\n".join(lines)
-
-
-def load_images_from_uploads(uploaded_files):
+def load_images_from_uploads(files):
     """Charge les images uploadées"""
     import base64
     from PIL import Image as PILImage
     import io
     
     images = []
-    
-    for idx, uploaded_file in enumerate(uploaded_files):
+    for idx, f in enumerate(files):
         try:
-            img = PILImage.open(uploaded_file)
+            img = PILImage.open(f)
             img.thumbnail((1024, 1024), PILImage.Resampling.LANCZOS)
             
             buffer = io.BytesIO()
             if img.mode == 'RGBA':
                 img = img.convert('RGB')
             img.save(buffer, format='JPEG', quality=85)
-            image_data = buffer.getvalue()
-            image_b64 = base64.b64encode(image_data).decode('utf-8')
+            data = buffer.getvalue()
             
             images.append({
                 'id': f"upload_{idx}",
-                'name': uploaded_file.name,
-                'data': image_data,
-                'base64': image_b64,
+                'name': f.name,
+                'data': data,
+                'base64': base64.b64encode(data).decode('utf-8'),
                 'thumbnail': None,
                 'mime_type': 'image/jpeg'
             })
         except Exception as e:
-            print(f"Erreur: {e}")
+            st.warning(f"Erreur image {f.name}: {e}")
     
     return images
 
 
-def load_images_from_links(links_text):
-    """Charge depuis des liens"""
-    from src.drive_loader import DriveLoaderManual
-    
-    loader = DriveLoaderManual()
-    file_ids = loader.extract_ids_from_links(links_text)
-    
-    if not file_ids:
-        raise ValueError("Aucun lien valide trouvé")
-    
-    return loader.load_from_ids(file_ids)
-
-
-def process_images(inputs: dict):
+def process_images(mode, drive_url, uploaded_files, image_links, brief, format_type, duration, tone):
     """Traite les images et génère le pitch"""
     
-    progress_placeholder = st.empty()
-    status_placeholder = st.empty()
+    progress = st.progress(0, text="Démarrage...")
     
     try:
-        mode = inputs['mode']
+        # 1. Charger les images
+        progress.progress(10, text="Chargement des images...")
         
-        with progress_placeholder.container():
-            render_progress(10, "Chargement des images...")
+        if mode == "Upload":
+            if not uploaded_files:
+                st.error("Veuillez uploader des images")
+                return
+            images = load_images_from_uploads(uploaded_files)
         
-        if "Google Drive" in mode:
-            if not inputs['drive_url']:
-                raise ValueError("Veuillez entrer un lien Google Drive")
+        elif mode == "Google Drive":
+            if not drive_url:
+                st.error("Veuillez entrer un lien Google Drive")
+                return
             loader = DriveLoader()
-            images = loader.load_from_url(inputs['drive_url'])
+            images = loader.load_from_url(drive_url)
         
-        elif "Upload" in mode:
-            if not inputs['uploaded_files']:
-                raise ValueError("Veuillez uploader au moins une image")
-            images = load_images_from_uploads(inputs['uploaded_files'])
-        
-        else:
-            if not inputs['image_links']:
-                raise ValueError("Veuillez coller au moins un lien")
-            images = load_images_from_links(inputs['image_links'])
+        else:  # Liens
+            if not image_links:
+                st.error("Veuillez coller des liens")
+                return
+            loader = DriveLoaderManual()
+            ids = loader.extract_ids_from_links(image_links)
+            images = loader.load_from_ids(ids)
         
         st.session_state.images_data = images
         
-        with progress_placeholder.container():
-            render_progress(25, f"{len(images)} images chargées")
-        
-        valid_images = [img for img in images if 'data' in img and img['data']]
+        # Filtrer images valides
+        valid_images = [img for img in images if img.get('data')]
         
         if not valid_images:
-            raise ValueError("Aucune image valide")
+            st.error("Aucune image valide chargée")
+            return
         
-        with progress_placeholder.container():
-            render_progress(40, f"Analyse de {len(valid_images)} images...")
+        progress.progress(30, text=f"{len(valid_images)} images chargées")
+        
+        # 2. Analyser
+        progress.progress(40, text="Analyse des images...")
         
         analyzer = ImageAnalyzer()
         analysis = analyzer.analyze_batch(valid_images)
         st.session_state.analysis_results = analysis
         
-        with progress_placeholder.container():
-            render_progress(70, "Génération du pitch...")
+        progress.progress(60, text="Analyse terminée")
+        
+        # 3. Générer
+        progress.progress(70, text="Génération du pitch...")
         
         builder = NarrativeBuilder()
         context = {
-            'brief': inputs['brief'],
-            'format': inputs['format_type'],
-            'duration': inputs['duration'],
-            'tone': inputs['tone']
+            'brief': brief,
+            'format': format_type,
+            'duration': duration,
+            'tone': tone
         }
         
         results = builder.generate_all(analysis, context)
@@ -722,27 +200,44 @@ def process_images(inputs: dict):
         st.session_state.sequencer = results['sequencer']
         st.session_state.decoupage = results['decoupage']
         
-        with progress_placeholder.container():
-            render_progress(100, "Terminé !")
-        
-        status_placeholder.success("✓ Pitch généré avec succès !")
+        progress.progress(100, text="Terminé !")
+        st.success("✅ Pitch généré avec succès !")
         
     except Exception as e:
-        status_placeholder.error(f"Erreur : {str(e)}")
+        st.error(f"Erreur : {str(e)}")
+
+
+def generate_video_prompts(platform, style, duration):
+    """Génère les prompts vidéo"""
+    if not st.session_state.decoupage:
+        st.warning("Générez d'abord le découpage")
+        return
+    
+    try:
+        gen = VideoPromptGenerator()
+        prompts = gen.generate_prompts_from_decoupage(
+            st.session_state.decoupage,
+            platform=platform,
+            style_context=style,
+            default_duration=duration
+        )
+        st.session_state.video_prompts = prompts
+        st.success(f"✅ {len(prompts)} prompts générés")
+    except Exception as e:
+        st.error(f"Erreur : {str(e)}")
 
 
 def export_pdf():
     """Export PDF"""
     try:
-        generator = PDFGenerator()
-        pdf_path = generator.generate(
+        gen = PDFGenerator()
+        path = gen.generate(
             pitch=st.session_state.pitch,
             sequencer=st.session_state.sequencer,
             decoupage=st.session_state.decoupage,
             images=st.session_state.images_data
         )
-        
-        with open(pdf_path, 'rb') as f:
+        with open(path, 'rb') as f:
             st.download_button(
                 "📥 Télécharger le PDF",
                 f.read(),
@@ -750,50 +245,191 @@ def export_pdf():
                 mime="application/pdf"
             )
     except Exception as e:
-        st.error(f"Erreur PDF : {e}")
-
-
-def save_project(name: str):
-    """Sauvegarde le projet"""
-    ProjectManager().save_project(
-        name=name,
-        data={
-            'pitch': st.session_state.pitch,
-            'sequencer': st.session_state.sequencer,
-            'decoupage': st.session_state.decoupage,
-            'video_prompts': st.session_state.video_prompts,
-            'images_data': st.session_state.images_data,
-        }
-    )
+        st.error(f"Erreur PDF : {str(e)}")
 
 
 def main():
-    """Fonction principale"""
     init_session_state()
-    render_header()
     render_sidebar()
     
-    inputs = render_input_section()
+    # Header
+    st.markdown('<h1 class="main-title">🎬 Pitch Generator</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Transformez vos images en narrations cinématographiques</p>', unsafe_allow_html=True)
     
-    # Bouton centré
-    st.markdown("<br>", unsafe_allow_html=True)
+    # === SECTION ENTRÉE ===
+    st.header("📁 Source des images")
+    
+    mode = st.radio(
+        "Comment charger vos images ?",
+        ["Upload", "Google Drive", "Liens"],
+        horizontal=True
+    )
+    
+    drive_url = None
+    uploaded_files = None
+    image_links = None
+    
+    if mode == "Upload":
+        uploaded_files = st.file_uploader(
+            "Sélectionnez vos images",
+            type=['jpg', 'jpeg', 'png', 'gif', 'webp'],
+            accept_multiple_files=True
+        )
+        if uploaded_files:
+            st.success(f"✓ {len(uploaded_files)} images sélectionnées")
+    
+    elif mode == "Google Drive":
+        drive_url = st.text_input(
+            "Lien du dossier Google Drive",
+            placeholder="https://drive.google.com/drive/folders/..."
+        )
+        st.info("💡 Le dossier doit être partagé avec 'Tous ceux qui ont le lien'")
+    
+    else:
+        image_links = st.text_area(
+            "Liens des images (un par ligne)",
+            placeholder="https://drive.google.com/file/d/xxx/view\nhttps://drive.google.com/file/d/yyy/view",
+            height=100
+        )
+    
+    st.divider()
+    
+    # Brief
+    st.header("✏️ Brief créatif")
+    
+    brief = st.text_area(
+        "Décrivez votre vision du projet",
+        placeholder="Type de projet (clip, documentaire...), ton souhaité, thématiques, références visuelles...",
+        height=150
+    )
+    
+    st.divider()
+    
+    # Options
+    st.header("⚙️ Paramètres")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        format_type = st.selectbox(
+            "Format",
+            ["Clip musical", "Court-métrage", "Documentaire", "Publicité", "Vidéo artistique"]
+        )
+    
+    with col2:
+        duration = st.selectbox(
+            "Durée cible",
+            ["1-2 min", "3-5 min", "5-10 min", "10-20 min", "20+ min"]
+        )
+    
+    with col3:
+        tone = st.selectbox(
+            "Tonalité",
+            ["Naturaliste", "Poétique", "Onirique", "Documentaire", "Narratif"]
+        )
+    
+    st.divider()
+    
+    # Bouton génération
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("✨ Générer le pitch", type="primary", use_container_width=True):
-            mode = inputs['mode']
-            
-            if "Google Drive" in mode and not inputs['drive_url']:
-                st.warning("Veuillez entrer un lien Google Drive")
-            elif "Upload" in mode and not inputs['uploaded_files']:
-                st.warning("Veuillez uploader au moins une image")
-            elif "Liens" in mode and not inputs['image_links']:
-                st.warning("Veuillez coller au moins un lien")
-            elif not os.getenv("GEMINI_API_KEY"):
-                st.warning("⚠️ Configurez votre clé API Gemini dans la barre latérale (flèche > en haut à gauche)")
+            if not os.getenv("GEMINI_API_KEY"):
+                st.error("⚠️ Configurez votre clé API Gemini dans la barre latérale (flèche > en haut à gauche)")
             else:
-                process_images(inputs)
+                process_images(mode, drive_url, uploaded_files, image_links, brief, format_type, duration, tone)
     
-    render_results()
+    # === SECTION RÉSULTATS ===
+    if st.session_state.pitch or st.session_state.sequencer or st.session_state.decoupage:
+        st.divider()
+        st.header("📄 Résultats")
+        
+        tabs = st.tabs(["Pitch", "Séquencier", "Découpage", "🎬 Prompts Vidéo", "Images"])
+        
+        with tabs[0]:
+            if st.session_state.pitch:
+                st.markdown(st.session_state.pitch)
+        
+        with tabs[1]:
+            if st.session_state.sequencer:
+                st.markdown(st.session_state.sequencer)
+        
+        with tabs[2]:
+            if st.session_state.decoupage:
+                st.markdown(st.session_state.decoupage)
+        
+        with tabs[3]:
+            st.subheader("Génération de prompts vidéo")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                platform = st.selectbox(
+                    "Plateforme",
+                    ['veo3', 'kling', 'runway'],
+                    format_func=lambda x: {'veo3': 'Google Veo 3', 'kling': 'Kling 2.6', 'runway': 'Runway Gen-4'}[x]
+                )
+            with col2:
+                vid_duration = st.number_input("Durée par défaut (sec)", 2, 30, 5)
+            
+            vid_style = st.text_input(
+                "Style visuel (optionnel)",
+                placeholder="cinematic, film grain, natural lighting..."
+            )
+            
+            if st.button("🎬 Générer les prompts"):
+                generate_video_prompts(platform, vid_style, vid_duration)
+            
+            if st.session_state.video_prompts:
+                st.divider()
+                for idx, p in enumerate(st.session_state.video_prompts):
+                    with st.expander(f"Plan {p.get('shot_number', idx+1)} | {p.get('shot_value', '')} | {p.get('duration', 5)}s"):
+                        if p.get('image_ref'):
+                            st.caption(f"📷 Image: {p.get('image_ref')}")
+                        st.code(p.get('prompt', ''))
+        
+        with tabs[4]:
+            if st.session_state.images_data:
+                cols = st.columns(6)
+                for idx, img in enumerate(st.session_state.images_data[:30]):
+                    with cols[idx % 6]:
+                        if img.get('thumbnail'):
+                            st.image(img['thumbnail'], use_container_width=True)
+                        st.caption(img.get('name', '')[:12])
+        
+        # Export
+        st.divider()
+        st.header("💾 Export")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📥 Exporter PDF"):
+                export_pdf()
+        
+        with col2:
+            if st.session_state.pitch:
+                content = f"# Pitch\n\n{st.session_state.pitch}\n\n---\n\n# Séquencier\n\n{st.session_state.sequencer or ''}\n\n---\n\n# Découpage\n\n{st.session_state.decoupage or ''}"
+                st.download_button("📥 Markdown", content, f"pitch_{datetime.now().strftime('%Y%m%d')}.md")
+        
+        with col3:
+            if st.session_state.video_prompts:
+                lines = []
+                for p in st.session_state.video_prompts:
+                    lines.append(f"Plan {p.get('shot_number', '?')} | {p.get('shot_value', '')}")
+                    lines.append(p.get('prompt', ''))
+                    lines.append("")
+                st.download_button("🎬 Prompts vidéo", "\n".join(lines), f"prompts_{datetime.now().strftime('%Y%m%d')}.txt")
+        
+        with col4:
+            project_name = st.text_input("Nom du projet", placeholder="Mon projet", label_visibility="collapsed")
+            if st.button("💾 Sauvegarder") and project_name:
+                ProjectManager().save_project(project_name, {
+                    'pitch': st.session_state.pitch,
+                    'sequencer': st.session_state.sequencer,
+                    'decoupage': st.session_state.decoupage,
+                    'video_prompts': st.session_state.video_prompts
+                })
+                st.success("✓ Sauvegardé")
 
 
 if __name__ == "__main__":

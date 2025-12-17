@@ -519,15 +519,8 @@ def process_images(inputs: dict):
             if not drive_url:
                 raise ValueError("Veuillez entrer un lien Google Drive")
             
-            # Essayer d'abord avec l'API si une clé est disponible
-            api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GOOGLE_DRIVE_API_KEY')
-            
-            if api_key:
-                from src.drive_loader import DriveLoaderLite
-                loader = DriveLoaderLite(api_key)
-            else:
-                from src.drive_loader import DriveLoader
-                loader = DriveLoader()
+            from src.drive_loader import DriveLoader
+            loader = DriveLoader()
             
             images = loader.load_from_url(
                 drive_url,
@@ -562,13 +555,19 @@ def process_images(inputs: dict):
         if len(images) == 0:
             raise ValueError("Aucune image n'a pu être chargée")
         
+        # Filtrer les images sans données
+        valid_images = [img for img in images if 'data' in img and img['data']]
+        
+        if len(valid_images) == 0:
+            raise ValueError("Aucune image valide n'a pu être téléchargée")
+        
         # Étape 2: Analyse des images
         with progress_placeholder.container():
-            render_progress(40, "Analyse des images en cours...")
+            render_progress(40, f"Analyse de {len(valid_images)} images...")
         
         analyzer = ImageAnalyzer()
         analysis = analyzer.analyze_batch(
-            images, 
+            valid_images, 
             progress_callback=lambda p, m: progress_placeholder.container() or render_progress(40 + p * 0.3, m)
         )
         st.session_state.analysis_results = analysis

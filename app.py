@@ -12,6 +12,7 @@ from src.image_analyzer import ImageAnalyzer
 from src.narrative_builder import NarrativeBuilder
 from src.pdf_generator import PDFGenerator
 from src.project_manager import ProjectManager
+from src.video_prompt_generator import VideoPromptGenerator, ImageToVideoPrompt
 
 # Configuration de la page
 st.set_page_config(
@@ -246,10 +247,12 @@ def init_session_state():
         'pitch': None,
         'sequencer': None,
         'decoupage': None,
+        'video_prompts': None,
         'images_data': [],
         'processing': False,
         'current_project': None,
-        'input_mode': "Upload"
+        'input_mode': "Upload",
+        'video_platform': 'veo3'
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -301,6 +304,7 @@ def render_sidebar():
                         st.session_state.pitch = loaded.get('pitch')
                         st.session_state.sequencer = loaded.get('sequencer')
                         st.session_state.decoupage = loaded.get('decoupage')
+                        st.session_state.video_prompts = loaded.get('video_prompts')
                         st.rerun()
         else:
             st.caption("Aucun projet")
@@ -421,7 +425,7 @@ def render_results():
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<p class="card-title">📄 Résultats générés</p>', unsafe_allow_html=True)
     
-    tab_pitch, tab_seq, tab_dec, tab_images = st.tabs(["Pitch", "Séquencier", "Découpage", "Images"])
+    tab_pitch, tab_seq, tab_dec, tab_video, tab_images = st.tabs(["Pitch", "Séquencier", "Découpage", "🎬 Prompts Vidéo", "Images"])
     
     with tab_pitch:
         if st.session_state.pitch:
@@ -434,6 +438,9 @@ def render_results():
     with tab_dec:
         if st.session_state.decoupage:
             st.markdown(f'<div class="result-content">{st.session_state.decoupage}</div>', unsafe_allow_html=True)
+    
+    with tab_video:
+        render_video_prompts_tab()
     
     with tab_images:
         if st.session_state.images_data:
@@ -450,7 +457,7 @@ def render_results():
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<p class="card-title">💾 Exporter</p>', unsafe_allow_html=True)
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         if st.button("📥 PDF", use_container_width=True):
@@ -468,15 +475,142 @@ def render_results():
             )
     
     with col3:
-        project_name = st.text_input("Nom du projet", placeholder="Mon projet", label_visibility="collapsed")
+        if st.session_state.video_prompts:
+            prompts_content = format_video_prompts_export()
+            st.download_button(
+                "🎬 Prompts",
+                prompts_content,
+                file_name=f"video_prompts_{datetime.now().strftime('%Y%m%d')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
     
     with col4:
+        project_name = st.text_input("Nom du projet", placeholder="Mon projet", label_visibility="collapsed")
+    
+    with col5:
         if st.button("💾 Sauvegarder", use_container_width=True):
             if project_name:
                 save_project(project_name)
                 st.success("✓ Sauvegardé")
     
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_video_prompts_tab():
+    """Affiche l'onglet des prompts vidéo"""
+    
+    st.markdown("### 🎬 Génération de prompts vidéo")
+    st.markdown("Générez des prompts optimisés pour vos outils de génération vidéo IA.")
+    
+    # Sélection de la plateforme
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        platform = st.selectbox(
+            "Plateforme cible",
+            options=['veo3', 'kling', 'runway'],
+            format_func=lambda x: {
+                'veo3': '🎬 Google Veo 3',
+                'kling': '🎥 Kling 2.6', 
+                'runway': '🎞️ Runway Gen-4'
+            }.get(x, x),
+            key="video_platform_select"
+        )
+    
+    with col2:
+        default_duration = st.number_input("Durée par défaut (sec)", min_value=2, max_value=30, value=5)
+    
+    # Style visuel
+    style_context = st.text_input(
+        "Style visuel global (optionnel)",
+        placeholder="ex: cinematic, film grain, natural lighting, documentary style..."
+    )
+    
+    # Bouton de génération
+    if st.button("✨ Générer les prompts vidéo", use_container_width=True):
+        if st.session_state.decoupage:
+            with st.spinner("Génération des prompts en cours..."):
+                generate_video_prompts(platform, style_context, default_duration)
+        else:
+            st.warning("Veuillez d'abord générer le découpage")
+    
+    # Affichage des prompts générés
+    if st.session_state.video_prompts:
+        st.markdown("---")
+        st.markdown(f"### Prompts générés ({len(st.session_state.video_prompts)} plans)")
+        
+        for idx, prompt_data in enumerate(st.session_state.video_prompts):
+            with st.expander(
+                f"**Seq {prompt_data.get('sequence_number', '?')} - Plan {prompt_data.get('shot_number', idx+1)}** | "
+                f"{prompt_data.get('shot_value', '')} | {prompt_data.get('camera_movement', '')} | "
+                f"{prompt_data.get('duration', 5)}s"
+            ):
+                # Info image de référence
+                if prompt_data.get('image_ref'):
+                    st.caption(f"📷 Image de référence : {prompt_data.get('image_ref')}")
+                
+                # Le prompt
+                st.code(prompt_data.get('prompt', ''), language=None)
+                
+                # Bouton copier
+                st.button(
+                    "📋 Copier",
+                    key=f"copy_{idx}",
+                    on_click=lambda p=prompt_data.get('prompt', ''): st.write(p)
+                )
+
+
+def generate_video_prompts(platform: str, style_context: str, default_duration: int):
+    """Génère les prompts vidéo depuis le découpage"""
+    try:
+        generator = VideoPromptGenerator()
+        prompts = generator.generate_prompts_from_decoupage(
+            decoupage_text=st.session_state.decoupage,
+            platform=platform,
+            style_context=style_context,
+            default_duration=default_duration
+        )
+        st.session_state.video_prompts = prompts
+        st.success(f"✓ {len(prompts)} prompts générés pour {platform.upper()}")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erreur : {str(e)}")
+
+
+def format_video_prompts_export() -> str:
+    """Formate les prompts pour l'export"""
+    if not st.session_state.video_prompts:
+        return ""
+    
+    lines = [
+        "=" * 60,
+        "PROMPTS VIDÉO - PITCH GENERATOR",
+        f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}",
+        "=" * 60,
+        ""
+    ]
+    
+    current_seq = None
+    for p in st.session_state.video_prompts:
+        if p.get('sequence_number') != current_seq:
+            current_seq = p.get('sequence_number')
+            lines.append("")
+            lines.append("-" * 40)
+            lines.append(f"SÉQUENCE {current_seq} - {p.get('sequence_title', '')}")
+            lines.append("-" * 40)
+        
+        lines.append("")
+        lines.append(f"PLAN {p.get('shot_number', '?')} | {p.get('shot_value', '')} | {p.get('camera_movement', '')} | {p.get('duration', 5)}s")
+        if p.get('image_ref'):
+            lines.append(f"Image ref: {p.get('image_ref')}")
+        lines.append(f"Plateforme: {p.get('platform_name', '')}")
+        lines.append("")
+        lines.append("PROMPT:")
+        lines.append(p.get('prompt', ''))
+        lines.append("")
+    
+    return "\n".join(lines)
 
 
 def load_images_from_uploads(uploaded_files):
@@ -627,6 +761,7 @@ def save_project(name: str):
             'pitch': st.session_state.pitch,
             'sequencer': st.session_state.sequencer,
             'decoupage': st.session_state.decoupage,
+            'video_prompts': st.session_state.video_prompts,
             'images_data': st.session_state.images_data,
         }
     )

@@ -12,7 +12,24 @@ from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
 from collections import Counter
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+
+# Import safety settings avec fallback
+try:
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    SAFETY_SETTINGS = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
+except ImportError:
+    # Fallback pour anciennes versions
+    SAFETY_SETTINGS = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
 
 
 @dataclass
@@ -79,14 +96,6 @@ class ImageAnalyzer:
     Inclut des safety_settings permissifs pour les projets créatifs
     """
     
-    # Configuration des filtres de sécurité - PERMISSIF pour projets créatifs
-    SAFETY_SETTINGS = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-    
     def __init__(self, api_key: Optional[str] = None, model_name: str = 'gemini-2.5-flash'):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not self.api_key:
@@ -98,7 +107,7 @@ class ImageAnalyzer:
         self.model_name = model_name
         self.model = genai.GenerativeModel(
             model_name,
-            safety_settings=self.SAFETY_SETTINGS
+            safety_settings=SAFETY_SETTINGS
         )
         
         # Configuration du batching - optimisé pour compte payant
@@ -160,7 +169,7 @@ class ImageAnalyzer:
                         self.model_name = 'gemini-2.0-flash'
                         self.model = genai.GenerativeModel(
                             'gemini-2.0-flash',
-                            safety_settings=self.SAFETY_SETTINGS
+                            safety_settings=SAFETY_SETTINGS
                         )
                         continue
                     raise

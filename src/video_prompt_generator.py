@@ -6,6 +6,16 @@ Compatible avec : Veo 3, Kling 2.6, Runway Gen-4
 import os
 from typing import Dict, List, Optional
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+
+
+# Configuration des filtres de sécurité - PERMISSIF pour projets créatifs
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
 
 
 class VideoPromptGenerator:
@@ -101,8 +111,11 @@ class VideoPromptGenerator:
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            # Utiliser gemini-2.5-flash (dernière version, plus performante)
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            # Utiliser gemini-2.5-flash avec safety settings permissifs
+            self.model = genai.GenerativeModel(
+                'gemini-2.5-flash',
+                safety_settings=SAFETY_SETTINGS
+            )
         else:
             self.model = None
     
@@ -324,8 +337,11 @@ class ImageToVideoPrompt:
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            # Utiliser gemini-2.5-flash (dernière version, plus performante)
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            # Utiliser gemini-2.5-flash avec safety settings permissifs
+            self.model = genai.GenerativeModel(
+                'gemini-2.5-flash',
+                safety_settings=SAFETY_SETTINGS
+            )
     
     def generate_from_image(
         self,

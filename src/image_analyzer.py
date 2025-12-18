@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
 from collections import Counter
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 
 @dataclass
@@ -75,8 +76,16 @@ class ImageAnalyzer:
     Utilise le batching : plusieurs images analysées par requête
     Modèle : gemini-2.5-flash (dernière version, plus rapide et performante)
     
-    Quotas compte payant : ~2000 RPM, pas de limite journalière stricte
+    Inclut des safety_settings permissifs pour les projets créatifs
     """
+    
+    # Configuration des filtres de sécurité - PERMISSIF pour projets créatifs
+    SAFETY_SETTINGS = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
     
     def __init__(self, api_key: Optional[str] = None, model_name: str = 'gemini-2.5-flash'):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
@@ -87,13 +96,17 @@ class ImageAnalyzer:
         
         # Utiliser gemini-2.5-flash (dernière version)
         self.model_name = model_name
-        self.model = genai.GenerativeModel(model_name)
+        self.model = genai.GenerativeModel(
+            model_name,
+            safety_settings=self.SAFETY_SETTINGS
+        )
         
         # Configuration du batching - optimisé pour compte payant
         self.batch_size = 10  # Images par requête
-        self.min_delay = 0.5  # Délai minimal entre requêtes (compte payant = quota élevé)
+        self.min_delay = 0.5  # Délai minimal entre requêtes
         self.last_request_time = 0
         self.total_requests = 0
+        self.blocked_count = 0
     
     def _wait_for_rate_limit(self):
         """Respecte le rate limit entre les requêtes"""
@@ -103,32 +116,60 @@ class ImageAnalyzer:
         self.last_request_time = time.time()
     
     def _make_request_with_retry(self, content, max_retries=3):
-        """Fait une requête avec retry automatique en cas d'erreur"""
+        """Fait une requête avec retry automatique et gestion des blocages"""
         for attempt in range(max_retries):
             try:
                 self._wait_for_rate_limit()
                 response = self.model.generate_content(content)
                 self.total_requests += 1
-                return response.text
+                
+                # Vérifier si la réponse contient du texte
+                if response.parts:
+                    return response.text
+                
+                # Vérifier le feedback de blocage
+                if hasattr(response, 'prompt_feedback'):
+                    feedback = response.prompt_feedback
+                    if hasattr(feedback, 'block_reason') and feedback.block_reason:
+                        print(f"⚠️ Contenu bloqué par Gemini: {feedback.block_reason}")
+                        self.blocked_count += 1
+                        return None
+                
+                return None
+                
             except Exception as e:
                 error_str = str(e).lower()
+                
+                # Gestion du contenu bloqué
+                if 'blocked' in error_str or 'prohibited' in error_str or 'safety' in error_str:
+                    print(f"⚠️ Contenu bloqué par les filtres de sécurité Gemini")
+                    self.blocked_count += 1
+                    return None  # Continuer sans cette image
+                
+                # Rate limit
                 if '429' in str(e) or 'quota' in error_str or 'rate' in error_str:
-                    # Compte payant : attente courte puis retry
                     wait_time = 5 + (attempt * 5)
-                    print(f"Rate limit temporaire - attente {wait_time}s (tentative {attempt+1}/{max_retries})")
+                    print(f"Rate limit - attente {wait_time}s (tentative {attempt+1}/{max_retries})")
                     time.sleep(wait_time)
-                elif 'not found' in error_str or 'not supported' in error_str:
-                    # Modèle non disponible, essayer un fallback
+                    continue
+                
+                # Modèle non disponible
+                if 'not found' in error_str or 'not supported' in error_str:
                     if self.model_name != 'gemini-2.0-flash':
                         print(f"Modèle {self.model_name} non disponible, utilisation de gemini-2.0-flash")
                         self.model_name = 'gemini-2.0-flash'
-                        self.model = genai.GenerativeModel('gemini-2.0-flash')
+                        self.model = genai.GenerativeModel(
+                            'gemini-2.0-flash',
+                            safety_settings=self.SAFETY_SETTINGS
+                        )
                         continue
                     raise
-                else:
-                    if attempt == max_retries - 1:
-                        raise
-                    time.sleep(2)
+                
+                # Autres erreurs
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2)
+        
         return None
     
     def analyze_batch(
@@ -139,27 +180,18 @@ class ImageAnalyzer:
         """
         Point d'entrée principal - Analyse un ensemble d'images
         
-        Utilise le batching pour optimiser le nombre de requêtes:
-        - 100 images = ~12 requêtes au lieu de 100
-        - Respecte les rate limits automatiquement
-        
-        Args:
-            images: Liste de dicts avec 'base64', 'name', 'mime_type'
-            progress_callback: Fonction(progress: 0-1, message: str)
-        
-        Returns:
-            GlobalAnalysis avec toutes les analyses
+        Gère les blocages de sécurité en essayant d'analyser les images
+        individuellement si un batch est bloqué.
         """
         total = len(images)
         all_analyses = []
+        self.blocked_count = 0
         
         if progress_callback:
             progress_callback(0, f"Démarrage de l'analyse de {total} images...")
         
-        # Nombre de batches nécessaires
         num_batches = (total + self.batch_size - 1) // self.batch_size
         
-        # Traiter par lots
         for batch_idx, batch_start in enumerate(range(0, total, self.batch_size)):
             batch_end = min(batch_start + self.batch_size, total)
             batch = images[batch_start:batch_end]
@@ -168,21 +200,102 @@ class ImageAnalyzer:
                 progress = (batch_idx / num_batches) * 0.8
                 progress_callback(progress, f"Lot {batch_idx+1}/{num_batches} ({batch_start+1}-{batch_end}/{total})")
             
-            # Analyser le lot
+            # Essayer d'analyser le lot entier
             batch_analyses = self._analyze_batch(batch, batch_start)
+            
+            # Si le batch a échoué (toutes les analyses vides), essayer image par image
+            if all(not a.description for a in batch_analyses):
+                if progress_callback:
+                    progress_callback(progress, f"Lot {batch_idx+1} bloqué - analyse individuelle...")
+                
+                batch_analyses = []
+                for i, img in enumerate(batch):
+                    single_analysis = self._analyze_single_image(img, batch_start + i)
+                    batch_analyses.append(single_analysis)
+            
             all_analyses.extend(batch_analyses)
         
+        # Rapport sur les blocages
+        successful = sum(1 for a in all_analyses if a.description)
         if progress_callback:
-            progress_callback(0.85, "Synthèse globale...")
+            if self.blocked_count > 0:
+                progress_callback(0.85, f"Synthèse... ({successful}/{total} images analysées, {self.blocked_count} bloquées)")
+            else:
+                progress_callback(0.85, f"Synthèse de {successful} images...")
         
-        # Générer la synthèse globale
-        global_analysis = self._generate_global_synthesis(all_analyses)
+        # Générer la synthèse si on a des analyses
+        if successful > 0:
+            global_analysis = self._generate_global_synthesis(all_analyses)
+        else:
+            # Synthèse vide si tout est bloqué
+            global_analysis = GlobalAnalysis(
+                visual_style="Analyse non disponible",
+                narrative_threads=["Les images n'ont pas pu être analysées"]
+            )
+        
         global_analysis.individual_analyses = all_analyses
         
         if progress_callback:
-            progress_callback(1.0, f"✓ {len(all_analyses)} images analysées ({self.total_requests} requêtes)")
+            progress_callback(1.0, f"✓ {successful}/{total} images analysées ({self.total_requests} requêtes)")
         
         return global_analysis
+    
+    def _analyze_single_image(self, img: Dict, idx: int) -> ImageAnalysis:
+        """Analyse une seule image (fallback si le batch est bloqué)"""
+        
+        prompt = """Analyse cette image pour un projet audiovisuel.
+
+Fournis une analyse JSON:
+{
+    "description": "description détaillée de la scène",
+    "subjects": ["sujets visibles"],
+    "setting": "lieu/environnement",
+    "mood": "ambiance",
+    "colors": ["couleurs principales"],
+    "actions": ["actions visibles"],
+    "objects": ["objets notables"]
+}
+
+Réponds UNIQUEMENT avec le JSON."""
+
+        content_parts = [prompt]
+        
+        if img.get('base64'):
+            try:
+                image_part = {
+                    'mime_type': img.get('mime_type', 'image/jpeg'),
+                    'data': base64.b64decode(img['base64'])
+                }
+                content_parts.append(image_part)
+            except:
+                pass
+        
+        try:
+            response_text = self._make_request_with_retry(content_parts)
+            
+            if response_text:
+                json_text = self._extract_json(response_text)
+                data = json.loads(json_text)
+                
+                return ImageAnalysis(
+                    image_id=img.get('id', f'img_{idx}'),
+                    image_name=img.get('name', f'image_{idx}'),
+                    description=data.get('description', ''),
+                    subjects=data.get('subjects', []),
+                    setting=data.get('setting', ''),
+                    mood=data.get('mood', ''),
+                    colors=data.get('colors', []),
+                    actions=data.get('actions', []),
+                    objects=data.get('objects', [])
+                )
+        except:
+            pass
+        
+        return ImageAnalysis(
+            image_id=img.get('id', f'img_{idx}'),
+            image_name=img.get('name', f'image_{idx}'),
+            description="[Image non analysée - filtre de sécurité]"
+        )
     
     def _analyze_batch(self, batch: List[Dict], start_idx: int) -> List[ImageAnalysis]:
         """Analyse un lot d'images en une seule requête"""

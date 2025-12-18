@@ -5,6 +5,16 @@ Module de construction narrative et génération de pitchs
 import os
 from typing import Dict, List, Optional
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+
+
+# Configuration des filtres de sécurité - PERMISSIF pour projets créatifs
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
 
 
 class NarrativeBuilder:
@@ -16,8 +26,11 @@ class NarrativeBuilder:
             raise ValueError("Clé API Gemini non trouvée")
         
         genai.configure(api_key=self.api_key)
-        # Utiliser gemini-2.5-flash (dernière version, plus performante)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        # Utiliser gemini-2.5-flash avec safety settings permissifs
+        self.model = genai.GenerativeModel(
+            'gemini-2.5-flash',
+            safety_settings=SAFETY_SETTINGS
+        )
     
     def generate_all(self, analysis: 'GlobalAnalysis', context: Dict) -> Dict:
         """
@@ -287,8 +300,11 @@ class PitchRefiner:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         genai.configure(api_key=self.api_key)
-        # Utiliser gemini-2.5-flash (dernière version, plus performante)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        # Utiliser gemini-2.5-flash avec safety settings permissifs
+        self.model = genai.GenerativeModel(
+            'gemini-2.5-flash',
+            safety_settings=SAFETY_SETTINGS
+        )
     
     def refine_for_tone(self, pitch: str, target_tone: str) -> str:
         """Affine le pitch pour correspondre à un ton spécifique"""

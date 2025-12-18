@@ -11,7 +11,7 @@ from src.image_analyzer import ImageAnalyzer
 from src.narrative_builder import NarrativeBuilder
 from src.pdf_generator import PDFGenerator
 from src.project_manager import ProjectManager
-from src.video_prompt_generator import VideoPromptGenerator
+from src.video_prompt_generator import VideoPromptGenerator, generate_video_prompts_from_decoupage
 
 # Configuration
 st.set_page_config(
@@ -52,10 +52,20 @@ def init_session_state():
         st.session_state.decoupage = None
     if 'video_prompts' not in st.session_state:
         st.session_state.video_prompts = None
+    if 'video_prompts_txt' not in st.session_state:
+        st.session_state.video_prompts_txt = None
+    if 'video_prompts_md' not in st.session_state:
+        st.session_state.video_prompts_md = None
+    if 'style_guide' not in st.session_state:
+        st.session_state.style_guide = None
     if 'images_data' not in st.session_state:
         st.session_state.images_data = []
     if 'analysis_results' not in st.session_state:
         st.session_state.analysis_results = None
+    if 'analysis_summary' not in st.session_state:
+        st.session_state.analysis_summary = ""
+    if 'selected_tone' not in st.session_state:
+        st.session_state.selected_tone = "Naturaliste"
 
 
 def render_sidebar():
@@ -183,6 +193,17 @@ def process_images(mode, drive_url, uploaded_files, image_links, brief, format_t
         
         progress.progress(60, text="Analyse terminée")
         
+        # Créer un résumé de l'analyse pour les prompts vidéo
+        analysis_summary = f"""
+Visual Style: {analysis.visual_style}
+Recurring Subjects: {', '.join([s['name'] for s in analysis.recurring_subjects[:10]])}
+Settings: {', '.join(analysis.recurring_settings[:5])}
+Moods: {', '.join(analysis.dominant_moods[:5])}
+Color Palette: {', '.join(analysis.color_palette[:8])}
+"""
+        st.session_state.analysis_summary = analysis_summary
+        st.session_state.selected_tone = tone
+        
         # 3. Générer
         progress.progress(70, text="Génération du pitch...")
         
@@ -207,22 +228,28 @@ def process_images(mode, drive_url, uploaded_files, image_links, brief, format_t
         st.error(f"Erreur : {str(e)}")
 
 
-def generate_video_prompts(platform, style, duration):
-    """Génère les prompts vidéo"""
+def generate_video_prompts():
+    """Génère les prompts vidéo optimisés pour Veo 3 et Kling"""
     if not st.session_state.decoupage:
         st.warning("Générez d'abord le découpage")
         return
     
     try:
-        gen = VideoPromptGenerator()
-        prompts = gen.generate_prompts_from_decoupage(
-            st.session_state.decoupage,
-            platform=platform,
-            style_context=style,
-            default_duration=duration
-        )
-        st.session_state.video_prompts = prompts
-        st.success(f"✅ {len(prompts)} prompts générés")
+        with st.spinner("Génération des prompts vidéo en cours..."):
+            result = generate_video_prompts_from_decoupage(
+                decoupage=st.session_state.decoupage,
+                images=st.session_state.images_data,
+                analysis_summary=st.session_state.analysis_summary,
+                tone=st.session_state.selected_tone,
+                api_key=os.getenv('GEMINI_API_KEY')
+            )
+            
+            st.session_state.video_prompts = result['shots']
+            st.session_state.video_prompts_txt = result['export_txt']
+            st.session_state.video_prompts_md = result['export_md']
+            st.session_state.style_guide = result['style_guide']
+            
+            st.success(f"✅ {len(result['shots'])} prompts générés (Veo 3 + Kling)")
     except Exception as e:
         st.error(f"Erreur : {str(e)}")
 
@@ -359,33 +386,79 @@ def main():
                 st.markdown(st.session_state.decoupage)
         
         with tabs[3]:
-            st.subheader("Génération de prompts vidéo")
+            st.subheader("🎬 Prompts Vidéo (Veo 3 & Kling)")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                platform = st.selectbox(
-                    "Plateforme",
-                    ['veo3', 'kling', 'runway'],
-                    format_func=lambda x: {'veo3': 'Google Veo 3', 'kling': 'Kling 2.6', 'runway': 'Runway Gen-4'}[x]
-                )
-            with col2:
-                vid_duration = st.number_input("Durée par défaut (sec)", 2, 30, 5)
+            st.info("💡 Génère des prompts optimisés pour Image-to-Video. Chaque plan indique l'image de référence à uploader et fournit un prompt pour Veo 3 ET Kling.")
             
-            vid_style = st.text_input(
-                "Style visuel (optionnel)",
-                placeholder="cinematic, film grain, natural lighting..."
-            )
+            if st.button("🎬 Générer les prompts vidéo", type="primary"):
+                generate_video_prompts()
             
-            if st.button("🎬 Générer les prompts"):
-                generate_video_prompts(platform, vid_style, vid_duration)
+            # Afficher le Style Guide si disponible
+            if st.session_state.style_guide:
+                with st.expander("🎨 Style Guide Global (cohérence artistique)", expanded=False):
+                    sg = st.session_state.style_guide
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"**Visual Style:** {sg.visual_style}")
+                        st.markdown(f"**Color Palette:** {sg.color_palette}")
+                        st.markdown(f"**Camera Style:** {sg.camera_style}")
+                    with col2:
+                        st.markdown(f"**Lighting:** {sg.lighting_style}")
+                        st.markdown(f"**Mood:** {sg.mood_keywords}")
+                        if sg.film_reference:
+                            st.markdown(f"**Reference:** {sg.film_reference}")
             
+            # Afficher les prompts
             if st.session_state.video_prompts:
                 st.divider()
-                for idx, p in enumerate(st.session_state.video_prompts):
-                    with st.expander(f"Plan {p.get('shot_number', idx+1)} | {p.get('shot_value', '')} | {p.get('duration', 5)}s"):
-                        if p.get('image_ref'):
-                            st.caption(f"📷 Image: {p.get('image_ref')}")
-                        st.code(p.get('prompt', ''))
+                
+                current_seq = None
+                for shot in st.session_state.video_prompts:
+                    # Nouveau header de séquence
+                    if shot.sequence_num != current_seq:
+                        current_seq = shot.sequence_num
+                        st.markdown(f"### Séquence {shot.sequence_num}: {shot.sequence_title}")
+                    
+                    with st.expander(f"📍 Shot {shot.sequence_num}.{shot.shot_num} | {shot.shot_value} | {shot.camera_movement} | {shot.duration}s"):
+                        # Image de référence (très visible)
+                        st.markdown(f"**📷 IMAGE À UPLOADER:** `{shot.reference_image}`")
+                        
+                        # Description originale
+                        st.markdown(f"**Description:** {shot.description_fr}")
+                        
+                        # Prompts côte à côte
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**🎬 VEO 3 PROMPT:**")
+                            st.code(shot.veo3_prompt, language=None)
+                        
+                        with col2:
+                            st.markdown("**🎥 KLING PROMPT:**")
+                            st.code(shot.kling_prompt, language=None)
+                
+                # Export buttons
+                st.divider()
+                st.markdown("**📥 Export des prompts:**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.session_state.video_prompts_txt:
+                        st.download_button(
+                            "📄 Télécharger TXT (copier-coller)",
+                            st.session_state.video_prompts_txt,
+                            file_name=f"video_prompts_{datetime.now().strftime('%Y%m%d')}.txt",
+                            mime="text/plain"
+                        )
+                
+                with col2:
+                    if st.session_state.video_prompts_md:
+                        st.download_button(
+                            "📝 Télécharger Markdown",
+                            st.session_state.video_prompts_md,
+                            file_name=f"video_prompts_{datetime.now().strftime('%Y%m%d')}.md",
+                            mime="text/markdown"
+                        )
         
         with tabs[4]:
             if st.session_state.images_data:
@@ -400,7 +473,7 @@ def main():
         st.divider()
         st.header("💾 Export")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if st.button("📥 Exporter PDF"):
@@ -409,25 +482,16 @@ def main():
         with col2:
             if st.session_state.pitch:
                 content = f"# Pitch\n\n{st.session_state.pitch}\n\n---\n\n# Séquencier\n\n{st.session_state.sequencer or ''}\n\n---\n\n# Découpage\n\n{st.session_state.decoupage or ''}"
-                st.download_button("📥 Markdown", content, f"pitch_{datetime.now().strftime('%Y%m%d')}.md")
+                st.download_button("📥 Pitch (Markdown)", content, f"pitch_{datetime.now().strftime('%Y%m%d')}.md")
         
         with col3:
-            if st.session_state.video_prompts:
-                lines = []
-                for p in st.session_state.video_prompts:
-                    lines.append(f"Plan {p.get('shot_number', '?')} | {p.get('shot_value', '')}")
-                    lines.append(p.get('prompt', ''))
-                    lines.append("")
-                st.download_button("🎬 Prompts vidéo", "\n".join(lines), f"prompts_{datetime.now().strftime('%Y%m%d')}.txt")
-        
-        with col4:
             project_name = st.text_input("Nom du projet", placeholder="Mon projet", label_visibility="collapsed")
             if st.button("💾 Sauvegarder") and project_name:
                 ProjectManager().save_project(project_name, {
                     'pitch': st.session_state.pitch,
                     'sequencer': st.session_state.sequencer,
                     'decoupage': st.session_state.decoupage,
-                    'video_prompts': st.session_state.video_prompts
+                    'video_prompts_txt': st.session_state.video_prompts_txt
                 })
                 st.success("✓ Sauvegardé")
 
